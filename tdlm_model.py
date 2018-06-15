@@ -100,7 +100,7 @@ class TopicModel(object):
         #compute masked/weighted crossent and mean topic model loss
         if is_training and config.num_samples > 0:
             tm_crossent = tf.nn.sampled_softmax_loss(self.tm_softmax_w_t, self.tm_softmax_b, 
-                tf.reshape(tf.cast(self.y, tf.float32), [-1, 1]), self.conv_hidden, config.num_samples, vocab_size)
+                tf.reshape(tf.cast(self.y, tf.float32), [-1, 1]), self.conv_hidden, config.num_samples, vocab_size,partition_strategy="div")
         else:
             self.tm_logits = tf.matmul(self.conv_hidden, self.tm_softmax_w) + self.tm_softmax_b
             tm_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.tm_logits, labels=tf.reshape(self.y, [-1]))
@@ -226,7 +226,7 @@ class LanguageModel(TopicModel):
             lm_crossent = tf.nn.sampled_softmax_loss(self.lm_softmax_w_t, 
                 self.lm_softmax_b, 
                 tf.reshape(tf.cast(self.y, tf.float32), [-1,1]) , 
-                hidden, config.num_samples, vocab_size)
+                hidden, config.num_samples, vocab_size,partition_strategy="div")
         else:
             lm_logits = tf.matmul(hidden, self.lm_softmax_w) + self.lm_softmax_b
             lm_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=lm_logits, labels=tf.reshape(self.y, [-1]))
