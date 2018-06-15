@@ -4,14 +4,6 @@ import math
 import scipy.stats
 from gensim import matutils
 from tensorflow.python.ops import array_ops
-if tf.__version__.split(".")[0] == "0":
-    if int(tf.__version__.split(".")[1]) > 8:
-        from tensorflow.python.ops.rnn_cell import _linear as linear
-    else:
-        from tensorflow.python.ops.rnn_cell import linear
-else:
-    print "TDLM supports tensorflow 0.8-0.12 only"
-    raise SystemExit
 
 #convolutional topic model
 class TopicModel(object):
@@ -20,7 +12,7 @@ class TopicModel(object):
         self.config = config #save config
 
         #placeholders
-        self.y = tf.placeholder(tf.int32, [None, num_steps])
+        self.y = tf.placeholder(tf.int32, [None, num_steps]) #bow vector
         self.tm_mask = tf.placeholder(tf.float32, [None, num_steps])
         self.doc = tf.placeholder(tf.int32, [None, config.doc_len])
         self.label = tf.placeholder(tf.int32, [None])
@@ -79,7 +71,7 @@ class TopicModel(object):
                 pooled_outputs.append(h)
 
         #concat the pooled features
-        conv_pooled = tf.concat(3, pooled_outputs)
+        conv_pooled = tf.concat(axis=3, values=pooled_outputs)
         conv_pooled = tf.reshape(conv_pooled, [-1, self.conv_size])
 
         #if there are tags, compute sum embedding and concat it with conv_pooled
@@ -87,12 +79,12 @@ class TopicModel(object):
             tag_emb = tf.nn.embedding_lookup(self.tag_embedding, self.tag)
             tag_mask = tf.expand_dims(tf.cast(tf.greater(self.tag, 0), tf.float32),2)
             tag_emb_m = tf.reduce_sum(tag_emb*tag_mask, 1)
-            conv_pooled = tf.concat(1, [conv_pooled, tag_emb_m])
+            conv_pooled = tf.concat(axis=1, values=[conv_pooled, tag_emb_m])
 
         #get the softmax attention weights and compute mean topic vector
-        self.attention = tf.nn.softmax(tf.reduce_sum(tf.mul(tf.expand_dims(self.topic_input_embedding, 0), \
+        self.attention = tf.nn.softmax(tf.reduce_sum(tf.multiply(tf.expand_dims(self.topic_input_embedding, 0), \
             tf.expand_dims(conv_pooled, 1)), 2))
-        self.mean_topic = tf.reduce_sum(tf.mul(tf.expand_dims(self.attention, 2), \
+        self.mean_topic = tf.reduce_sum(tf.multiply(tf.expand_dims(self.attention, 2), \
             tf.expand_dims(self.topic_output_embedding, 0)),1)
         if is_training and config.tm_keep_prob < 1.0:
             self.mean_topic_dropped = tf.nn.dropout(self.mean_topic, config.tm_keep_prob, seed=config.seed)
@@ -103,23 +95,24 @@ class TopicModel(object):
         #[batch_size*sent_len,config.topic_embedding_size]
         self.conv_hidden = tf.reshape(tf.tile(self.mean_topic_dropped, [1, num_steps]), \
             [batch_size*num_steps, config.topic_embedding_size])
-
+        ##s
+        
         #compute masked/weighted crossent and mean topic model loss
         if is_training and config.num_samples > 0:
-            tm_crossent = tf.nn.sampled_softmax_loss(self.tm_softmax_w_t, self.tm_softmax_b, self.conv_hidden, \
-                tf.reshape(self.y, [-1,1]), config.num_samples, vocab_size)
+            tm_crossent = tf.nn.sampled_softmax_loss(self.tm_softmax_w_t, self.tm_softmax_b, 
+                tf.reshape(tf.cast(self.y, tf.float32), [-1, 1]), self.conv_hidden, config.num_samples, vocab_size)
         else:
             self.tm_logits = tf.matmul(self.conv_hidden, self.tm_softmax_w) + self.tm_softmax_b
-            tm_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(self.tm_logits, tf.reshape(self.y, [-1]))
+            tm_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.tm_logits, labels=tf.reshape(self.y, [-1]))
         tm_crossent_m = tm_crossent * tf.reshape(self.tm_mask, [-1])
         self.tm_cost = tf.reduce_sum(tm_crossent_m) / batch_size
 
         #compute supervised classification loss
         if num_classes > 0:
-            sup_hidden = tf.concat(1, [conv_pooled, self.mean_topic])
+            sup_hidden = tf.concat(axis=1, values=[conv_pooled, self.mean_topic])
             sup_logits = tf.matmul(sup_hidden, self.sup_softmax_w) + self.sup_softmax_b
             self.sup_probs = tf.nn.softmax(sup_logits)
-            sup_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(sup_logits, self.label)
+            sup_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=sup_logits, labels=self.label)
             sup_crossent_m = sup_crossent * self.sup_mask
             self.sup_cost = tf.reduce_sum(sup_crossent_m) / batch_size
 
@@ -206,18 +199,18 @@ class LanguageModel(TopicModel):
             inputs = tf.nn.dropout(inputs, config.lm_keep_prob, seed=config.seed)
 
         #transform input from [batch_size,sent_len,emb_size] to [sent_len,batch_size,emb_size ]
-        inputs = [tf.squeeze(input_, [1]) for input_ in tf.split(1, num_steps, inputs)]
+        #inputs = [tf.squeeze(input_, [1]) for input_ in tf.split(axis=1, num_or_size_splits=num_steps, value=inputs)]
 
         #run rnn and get outputs (hidden layer)
-        outputs, self.state = tf.nn.rnn(self.cell, inputs, initial_state=self.initial_state)
+        outputs, self.state = tf.nn.dynamic_rnn(self.cell, inputs, initial_state=self.initial_state)
 
         #reshape output into [sent_len,batch_size,hidden_size] and then into [batch_size*sent_len,hidden_size]
-        lstm_hidden = tf.reshape(tf.concat(1, outputs), [-1, config.rnn_hidden_size])
+        lstm_hidden = tf.reshape(tf.concat(axis=1, values=outputs), [-1, config.rnn_hidden_size])
 
         if config.topic_number > 0:
             #combine topic and language model hidden with a gating unit
-            z, r = array_ops.split(1, 2, linear([self.conv_hidden, lstm_hidden], \
-                2 * config.rnn_hidden_size, True, 1.0))
+            zr = self.linear(tf.concat([self.conv_hidden, lstm_hidden], -1), 2 * config.rnn_hidden_size)
+            z, r = tf.split(zr, 2, 1)
             z, r = tf.sigmoid(z), tf.sigmoid(r)
             c = tf.tanh(tf.matmul(self.conv_hidden, self.gate_w) + tf.matmul((r * lstm_hidden), self.gate_u) + \
                 self.gate_b)
@@ -230,11 +223,13 @@ class LanguageModel(TopicModel):
 
         #compute masked/weighted crossent and mean language model loss
         if is_training and config.num_samples > 0:
-            lm_crossent = tf.nn.sampled_softmax_loss(self.lm_softmax_w_t, self.lm_softmax_b, hidden, \
-                tf.reshape(self.y, [-1,1]), config.num_samples, vocab_size)
+            lm_crossent = tf.nn.sampled_softmax_loss(self.lm_softmax_w_t, 
+                self.lm_softmax_b, 
+                tf.reshape(tf.cast(self.y, tf.float32), [-1,1]) , 
+                hidden, config.num_samples, vocab_size)
         else:
             lm_logits = tf.matmul(hidden, self.lm_softmax_w) + self.lm_softmax_b
-            lm_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(lm_logits, tf.reshape(self.y, [-1]))
+            lm_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=lm_logits, labels=tf.reshape(self.y, [-1]))
         lm_crossent_m = lm_crossent * tf.reshape(self.lm_mask, [-1])
         self.lm_cost = tf.reduce_sum(lm_crossent_m) / batch_size
 
@@ -292,3 +287,31 @@ class LanguageModel(TopicModel):
     def generate_on_doc(self, sess, doc, tag, start_word_id, temperature=1.0, max_length=30, stop_word_id=None): 
         c = sess.run(self.conv_hidden, {self.doc: doc, self.tag: tag})
         return self.generate(sess, c, start_word_id, temperature, max_length, stop_word_id)
+    
+    def linear(self, input_, output_size, scope=None):
+        '''
+        Linear map: output[k] = sum_i(Matrix[k, i] * args[i] ) + Bias[k]
+        Args:
+            args: a tensor or a list of 2D, batch x n, Tensors.
+        output_size: int, second dimension of W[i].
+        scope: VariableScope for the created subgraph; defaults to "Linear".
+        Returns:
+        A 2D Tensor with shape [batch x output_size] equal to
+        sum_i(args[i] * W[i]), where W[i]s are newly created matrices.
+        Raises:
+        ValueError: if some of the arguments has unspecified or wrong shape.
+        '''
+
+        shape = input_.get_shape().as_list()
+        if len(shape) != 2:
+            raise ValueError("Linear is expecting 2D arguments: %s" % str(shape))
+        if not shape[1]:
+            raise ValueError("Linear expects shape[1] of arguments: %s" % str(shape))
+        input_size = shape[1]
+
+        # Now the computation.
+        with tf.variable_scope(scope or "SimpleLinear"):
+            matrix = tf.get_variable("Matrix", [output_size, input_size], dtype=input_.dtype)
+            bias_term = tf.get_variable("Bias", [output_size], dtype=input_.dtype)
+
+        return tf.matmul(input_, tf.transpose(matrix)) + bias_term

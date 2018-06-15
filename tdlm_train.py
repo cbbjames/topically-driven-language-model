@@ -10,7 +10,7 @@ import sys
 import codecs
 import random
 import time
-import os
+import os, pdb
 import math
 import cPickle
 import operator
@@ -230,7 +230,7 @@ with tf.Graph().as_default(), tf.Session() as sess:
         lm_valid = LM(is_training=False, vocab_size=len(idxvocab), batch_size=cf.batch_size, \
             num_steps=cf.lm_sent_len, config=cf) if cf.rnn_hidden_size > 0 else None
 
-    tf.initialize_all_variables().run()
+    tf.global_variables_initializer().run()
 
     #initialise word embedding
     if cf.word_embedding_model:
