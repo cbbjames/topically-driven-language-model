@@ -1,12 +1,12 @@
 #see table 1 in paper for variable names
 from os.path import join
 #preprocessing options
-vocab_minfreq=2 #minimum vocab frequency to filter
-vocab_maxfreq=0.001 #proportion of most-frequent vocab to filter
-stopwords="data/toy-stopword.txt"
+vocab_minfreq=10 #minimum vocab frequency to filter
+vocab_maxfreq=0.1 #proportion of most-frequent vocab to filter
+stopwords="NLTKstopwords.txt"
 tm_sent_len=3 #m_1; topic model sequence length
 lm_sent_len=30 #m_2; language model sequence length
-doc_len=300 #m_3; document max length
+doc_len=150 #m_3; document max length
 
 #training options
 seed=1
@@ -17,7 +17,7 @@ epoch_size=10 #n_epoch
 topic_number=100 #k
 word_embedding_size=300 #e; setting ignored if word_embeding_model is provided
 word_embedding_model="word2vec/skipgram.bin" #pre-trained word embedding (gensim format); None if no pre-trained model
-word_embedding_update=False #update word embedding for topic model
+word_embedding_update=True #update word embedding for topic model
 filter_sizes=[2] #h
 filter_number=20 #a; topic input vector dimension
 conv_activation="identity" #relu or identity (identity function is used in paper)
@@ -27,7 +27,7 @@ tm_keep_prob=0.4 #p_1
 lm_keep_prob=0.6 #p_2
 max_grad_norm=5 #gradient clipping
 alpha=0.0 #additional loss to penalise similar topics; not used in paper (0.0)
-num_samples=10 #sampled softmax to speed up training; not used in paper (0)
+num_samples=0 #sampled softmax to speed up training; not used in paper (0)
 tag_embedding_size=0 #tag embedding dimension; 0 to disable tags
 
 #misc
