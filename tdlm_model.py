@@ -4,7 +4,7 @@ import math
 import scipy.stats
 from gensim import matutils
 from tensorflow.python.ops import array_ops
-
+from tensorflow.contrib.rnn.python.ops.core_rnn_cell import _linear as linear
 #convolutional topic model
 class TopicModel(object):
     def __init__(self, is_training, vocab_size, batch_size, num_steps, num_classes, config, reuse_conv_variables=None):
@@ -72,7 +72,7 @@ class TopicModel(object):
 
         #concat the pooled features
         conv_pooled = tf.concat(axis=3, values=pooled_outputs)
-        conv_pooled = tf.reshape(conv_pooled, [-1, self.conv_size])
+        conv_pooled = tf.reshape(conv_pooled, [-1, self.conv_size]) #d
 
         #if there are tags, compute sum embedding and concat it with conv_pooled
         if config.num_tags > 0:
@@ -109,7 +109,7 @@ class TopicModel(object):
 
         #compute supervised classification loss
         if num_classes > 0:
-            sup_hidden = tf.concat(axis=1, values=[conv_pooled, self.mean_topic])
+            sup_hidden = tf.concat(axis=1, values=[conv_pooled, self.mean_topic]) #d + pB
             sup_logits = tf.matmul(sup_hidden, self.sup_softmax_w) + self.sup_softmax_b
             self.sup_probs = tf.nn.softmax(sup_logits)
             sup_crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=sup_logits, labels=self.label)
@@ -121,7 +121,7 @@ class TopicModel(object):
 
         #topic uniqueness loss
         topicnorm = self.topic_output_embedding / tf.sqrt(tf.reduce_sum(tf.square(self.topic_output_embedding),1, \
-            keep_dims=True))
+            keepdims=True))
         uniqueness = tf.reduce_max(tf.square(tf.matmul(topicnorm, tf.transpose(topicnorm)) - self.eye))
         self.tm_cost += config.alpha * uniqueness
 
@@ -209,8 +209,8 @@ class LanguageModel(TopicModel):
 
         if config.topic_number > 0:
             #combine topic and language model hidden with a gating unit
-            zr = self.linear(tf.concat([self.conv_hidden, lstm_hidden], -1), 2 * config.rnn_hidden_size)
-            z, r = tf.split(zr, 2, 1)
+            z, r = tf.split(linear(tf.concat([self.conv_hidden, lstm_hidden], -1), \
+                2 * config.rnn_hidden_size, True), 2, 1)
             z, r = tf.sigmoid(z), tf.sigmoid(r)
             c = tf.tanh(tf.matmul(self.conv_hidden, self.gate_w) + tf.matmul((r * lstm_hidden), self.gate_u) + \
                 self.gate_b)
@@ -288,30 +288,3 @@ class LanguageModel(TopicModel):
         c = sess.run(self.conv_hidden, {self.doc: doc, self.tag: tag})
         return self.generate(sess, c, start_word_id, temperature, max_length, stop_word_id)
     
-    def linear(self, input_, output_size, scope=None):
-        '''
-        Linear map: output[k] = sum_i(Matrix[k, i] * args[i] ) + Bias[k]
-        Args:
-            args: a tensor or a list of 2D, batch x n, Tensors.
-        output_size: int, second dimension of W[i].
-        scope: VariableScope for the created subgraph; defaults to "Linear".
-        Returns:
-        A 2D Tensor with shape [batch x output_size] equal to
-        sum_i(args[i] * W[i]), where W[i]s are newly created matrices.
-        Raises:
-        ValueError: if some of the arguments has unspecified or wrong shape.
-        '''
-
-        shape = input_.get_shape().as_list()
-        if len(shape) != 2:
-            raise ValueError("Linear is expecting 2D arguments: %s" % str(shape))
-        if not shape[1]:
-            raise ValueError("Linear expects shape[1] of arguments: %s" % str(shape))
-        input_size = shape[1]
-
-        # Now the computation.
-        with tf.variable_scope(scope or "SimpleLinear"):
-            matrix = tf.get_variable("Matrix", [output_size, input_size], dtype=input_.dtype)
-            bias_term = tf.get_variable("Bias", [output_size], dtype=input_.dtype)
-
-        return tf.matmul(input_, tf.transpose(matrix)) + bias_term
